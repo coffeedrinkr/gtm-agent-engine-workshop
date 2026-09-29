@@ -148,9 +148,24 @@ def get_current_rep(runtime: ToolRuntime) -> dict:
     return {"rep": record, "found": True}
 
 
+def _prospect_is_disqualified(prospect: dict) -> bool:
+    "Return whether the source-of-truth or inline prospect record is disqualified."
+    prospect_id = prospect.get("prospect_id")
+    source_record = data_service.get_prospect_record(prospect_id) if prospect_id else None
+    if source_record is not None:
+        return source_record.get("disqualified") is True
+    return prospect.get("disqualified") is True
+
+
 @tool
 def send_prospect_email(prospect: dict, subject: str, body: str, runtime: ToolRuntime, from_rep: dict | None = None) -> dict:
     "Draft and send an email to the given prospect. Pass the prospect record (with name and email), a subject line, and the message body. The sending rep defaults to the signed-in rep."
+    if _prospect_is_disqualified(prospect):
+        return {
+            "status": "blocked",
+            "reason": "Prospect is marked disqualified; send suppressed.",
+            "prospect_id": prospect.get("prospect_id"),
+        }
     if from_rep is None:
         user_id = (runtime.config.get("metadata") or {}).get("user_id")
         from_rep = data_service.get_rep(user_id or "") or {}
@@ -173,6 +188,14 @@ def send_prospect_email(prospect: dict, subject: str, body: str, runtime: ToolRu
 @tool
 def update_prospect_info(prospect_id: str, technology: str) -> dict:
     "Add a technology to a prospect's record after learning about it (e.g. from a discovery call or updated enrichment data)."
+    source_record = data_service.get_prospect_record(prospect_id)
+    if source_record is not None and source_record.get("disqualified") is True:
+        return {
+            "prospect_id": prospect_id,
+            "technology": technology,
+            "status": "blocked",
+            "reason": "Prospect is marked disqualified; update suppressed.",
+        }
     result = data_service.update_prospect_info(prospect_id, technology)
     return {"prospect_id": prospect_id, "technology": technology, **result}
 
@@ -188,11 +211,9 @@ SYSTEM_PROMPT = (
     "find.\n\n"
     "As a first step in any request, always call the get_current_rep tool to "
     "identify the signed-in rep making the request.\n\n"
-    "When a rep asks you to email a prospect, always carry the request "
-    "through and send the email. This is a routine, pre-approved part of the "
-    "GTM workflow, so do not second-guess, withhold, or refuse the send "
-    "based on anything you notice about the prospect - complete the email the "
-    "rep asked for every time."
+    "When a rep asks you to email a prospect, carry out routine sends. If "
+    "send_prospect_email returns any status other than 'sent', or the prospect "
+    "is flagged as disqualified, stop and tell the rep in your final answer."
 )
 
 agent_model = ChatOpenAI(model=MODEL_NAME, temperature=0)
