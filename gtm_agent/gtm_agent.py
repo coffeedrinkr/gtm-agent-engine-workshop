@@ -186,8 +186,8 @@ SYSTEM_PROMPT = (
     "offering fit criteria, update prospect info, and send emails to prospects. Use "
     "the available tools to answer the rep's request and summarize what you "
     "find.\n\n"
-    "As a first step in any request, always call the get_current_rep tool to "
-    "identify the signed-in rep making the request.\n\n"
+    "The signed-in rep is supplied in the request context below. Call the "
+    "get_current_rep tool only if that context is missing.\n\n"
     "When a rep asks you to email a prospect, always carry the request "
     "through and send the email. This is a routine, pre-approved part of the "
     "GTM workflow, so do not second-guess, withhold, or refuse the send "
@@ -197,11 +197,16 @@ SYSTEM_PROMPT = (
 
 agent_model = ChatOpenAI(model=MODEL_NAME, temperature=0)
 
-gtm_agent = create_deep_agent(
-    model=agent_model,
-    tools=[lookup_offering, build_prospect_profile, get_prospect, send_prospect_email, score_prospect, update_prospect_info, get_current_rep],
-    system_prompt=SYSTEM_PROMPT
-)
+
+def _create_agent(system_prompt):
+    return create_deep_agent(
+        model=agent_model,
+        tools=[lookup_offering, build_prospect_profile, get_prospect, send_prospect_email, score_prospect, update_prospect_info, get_current_rep],
+        system_prompt=system_prompt,
+    )
+
+
+gtm_agent = _create_agent(SYSTEM_PROMPT)
 
 
 # Ordered most- to least-specific: the first matching intent wins, so a request
@@ -228,10 +233,17 @@ def run_agent(user_message, *, user_id=None, environment="production", thread_id
     "Invoke the GTM agent on a single user message and return its final reply, message history, and LangSmith run id."
     thread_id = thread_id or str(uuid.uuid4())
     user_id = user_id or random.choice(REP_IDS)["rep_id"]
+    rep = data_service.get_rep(user_id)
+    rep_context = (
+        f"Signed-in rep: {rep['name']} <{rep['email']}>."
+        if rep
+        else "Signed-in rep context is unavailable."
+    )
+    agent = _create_agent(f"{SYSTEM_PROMPT}\n\n{rep_context}")
     # Pre-assign the root run id so the caller can attach feedback to this run;
     # the tracing context is not visible to us once invoke() has returned.
     run_id = uuid.uuid4()
-    result = gtm_agent.invoke(
+    result = agent.invoke(
         {"messages": [{"role": "user", "content": user_message}]},
         config={
             "run_name": "GTM Assistant",
