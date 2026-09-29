@@ -111,9 +111,13 @@ def score_prospect(prospect_profile: dict, offering: dict | None = None) -> dict
     pid = prospect_profile.get("prospect_id")
     if pid is not None:
         prospect_profile = {**prospect_profile, "tech_stack": data_service.fetch_tech_stack(pid)}
+    scoring_profile = {
+        key: prospect_profile.get(key)
+        for key in ("prospect_id", "name", "annual_revenue", "tech_stack", "account_details")
+    }
     user = (
         "Offering:\n" + json.dumps(offering, indent=2) +
-        "\n\nProspect profile:\n" + json.dumps(prospect_profile, indent=2)
+        "\n\nProspect profile:\n" + json.dumps(scoring_profile, indent=2)
     )
     result = _scoring_llm.invoke([
         {"role": "system", "content": SCORING_PROMPT},
